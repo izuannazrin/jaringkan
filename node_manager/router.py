@@ -293,4 +293,7 @@ class Router:
 
     def stop(self):
         self._container.stop(timeout=10)
+        self._container.reload()
+        if self._container.attrs['State']['ExitCode'] != 0:
+            log.warning(f'Container stopped with non-zero code {self._container.attrs["State"]["ExitCode"]}')
         self._on_stop()

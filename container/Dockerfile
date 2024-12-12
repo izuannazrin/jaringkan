@@ -13,3 +13,9 @@ COPY ./root/ /
 # remove and add packages
 RUN --mount=type=tmpfs,target=/var/lock opkg remove procd-ujail
 RUN --mount=type=tmpfs,target=/var/lock opkg update && opkg install coreutils-ls mount-utils
+
+# disable unnecessary services
+RUN /etc/init.d/gpio_switch disable
+RUN /etc/init.d/sysfixtime disable
+RUN /etc/init.d/sysntpd disable
+RUN /etc/init.d/urandom_seed disable
