@@ -5,3 +5,8 @@ A Final Year Project for Kulliyyah of Information and Communication Technology, 
 Membered by Nurizuan Nazrin and Muhammad Faiq Danish.
 
 **Work-in-progress.**
+
+### Required supporting software
+
+- docker
+- systemd-resolved (and DNSStubListenerExtra=172.17.0.1)

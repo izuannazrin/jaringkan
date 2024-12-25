@@ -1,0 +1,21 @@
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+BOARD_CFG="/etc/board.json"
+
+[ -s ${BOARD_CFG} ] || exit 0
+
+json_load_file ${BOARD_CFG}
+
+json_select network
+json_select wan
+json_get_var gateway gateway
+if [ -n "${gateway}" ]; then
+    uci set network.wan.gateway="${gateway}"
+    uci set network.wan.dns="${gateway}"
+fi
+
+# json_get_var dns dns
+# if [ -n "${dns}" ]; then
+#     uci add_list network.wan.dns="${dns}"
+# fi

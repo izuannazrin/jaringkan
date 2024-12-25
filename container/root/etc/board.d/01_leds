@@ -1,0 +1,18 @@
+# Insya-Allah we will finish this project!
+#
+
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+case "$(board_name)" in
+jaringkan-openwrt)
+	name="jk-$(uname -n)"
+	ucidef_set_led_default "power" "Power" "${name}:green:power" "1"
+	ucidef_set_led_netdev "wan" "WAN" "${name}:green:wan" "eth0"
+	ucidef_set_led_netdev "lan" "LAN" "${name}:green:lan" "eth1"
+	;;
+esac
+board_config_flush
+
+exit 0

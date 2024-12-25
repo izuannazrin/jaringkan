@@ -7,15 +7,17 @@ ARG BASE_IMAGE_FILENAME=openwrt-23.05.5-x86-64-rootfs.tar.gz
 # copy base image to container
 ADD $BASE_IMAGE_FILENAME /
 
-# copy additional files to container
-COPY ./root/ /
-
 # remove and add packages
 RUN --mount=type=tmpfs,target=/var/lock opkg remove procd-ujail
-RUN --mount=type=tmpfs,target=/var/lock opkg update && opkg install coreutils-ls mount-utils
+RUN --mount=type=tmpfs,target=/var/lock opkg update && \
+    opkg install tcpdump wireless-regdb wpad-mesh kmod-mac80211 kmod-cfg80211
 
 # disable unnecessary services
-RUN /etc/init.d/gpio_switch disable
-RUN /etc/init.d/sysfixtime disable
-RUN /etc/init.d/sysntpd disable
-RUN /etc/init.d/urandom_seed disable
+RUN --mount=type=tmpfs,target=/var/lock \
+    /etc/init.d/gpio_switch disable && \    
+    /etc/init.d/sysfixtime disable && \
+    /etc/init.d/sysntpd disable && \
+    /etc/init.d/urandom_seed disable
+
+# copy additional files to container
+COPY ./root/ /

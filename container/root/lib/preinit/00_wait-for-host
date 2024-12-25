@@ -1,0 +1,16 @@
+#!/bin/sh
+# set -x
+
+echo "Waiting for host..." >&2
+
+touch /tmp/.wait-for-host
+for i in $(seq 1 10); do
+    if ! [ -e /tmp/.wait-for-host ]; then
+        break
+    fi
+    sleep 1
+done
+if [ -e /tmp/.wait-for-host ]; then
+    echo "Timed out waiting for host." >&2
+    exit 1
+fi

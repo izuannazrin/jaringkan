@@ -1,0 +1,47 @@
+. /lib/functions/system.sh
+. /lib/functions/uci-defaults.sh
+
+setup_interfaces() {
+	local board="$1"
+
+	case "$board" in
+	jaringkan-openwrt)
+		# ucidef_set_interface_wan "eth0"
+		ucidef_set_interface "wan" device "eth0" protocol "static" ipaddr "$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1)" netmask "$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f2)" gateway "$(ip -4 route show default | awk '{print $3}')"
+		ucidef_set_interface_lan "eth1"
+
+		# HACK: add gateway and dns (not working)
+		# touch /etc/config/network
+		# uci set network.wan=interface
+		# uci set network.wan.gateway="$(ip -4 route show default | awk '{print $3}')"
+		# uci set network.wan.dns="$(ip -4 route show default | awk '{print $3}')"
+		# uci commit network
+
+		# locate path to available hwsim phy
+		hwsim=$(basename $(readlink /sys/class/ieee80211/*/device))
+		ucidef_add_wlan "virtual/mac80211_hwsim/${hwsim}"
+		;;
+	esac
+}
+
+# preserve_docker_ip() {
+# 	addr=$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1)
+# 	netmask=$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f2)
+# 	gw=$(ip -4 route show default | awk '{print $3}')
+
+# 	# TODO: how to properly configure these...
+# 	uci set network.wan.proto=static
+# 	uci set network.wan.ipaddr=${addr}
+# 	uci set network.wan.netmask=${netmask}
+# 	uci set network.wan.gateway=${gw}
+# 	uci commit network
+# }
+
+board_config_update
+board=$(board_name)
+setup_interfaces $board
+board_config_flush
+
+# preserve_docker_ip
+
+exit 0

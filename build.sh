@@ -15,7 +15,7 @@ case "$1" in
 Usage: $0 <command>
 
 Commands:
-    build    Build the container image.
+    container   Build the container image.
 EOF
         ;;
 esac

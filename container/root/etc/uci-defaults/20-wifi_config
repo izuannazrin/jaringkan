@@ -1,0 +1,30 @@
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+BOARD_CFG="/etc/board.json"
+
+[ -s ${BOARD_CFG} ] || exit 0
+
+json_load_file ${BOARD_CFG}
+
+json_select wlan
+json_select wl0
+json_get_var path path
+if [ -n "${path}" ]; then
+    touch /etc/config/wireless
+    uci batch <<EOF
+set wireless.radio0=wifi-device
+set wireless.radio0.type=mac80211
+set wireless.radio0.path="${path}"
+set wireless.radio0.ldpc=0
+set wireless.radio0.rx_stbc=0
+set wireless.radio0.max_amsdu=0
+set wireless.radio0.cell_density=0
+
+set wireless.radio0.channel=auto
+set wireless.radio0.band=5g
+set wireless.radio0.htmode=HT20
+
+commit wireless
+EOF
+fi

@@ -1,0 +1,7 @@
+do_sysinfo_jaringkan() {
+	mkdir -p /tmp/sysinfo
+	echo "JARINGKAN! Docker Simulation" >/tmp/sysinfo/model
+	echo "jaringkan-openwrt" >/tmp/sysinfo/board_name
+}
+
+boot_hook_add preinit_main do_sysinfo_jaringkan

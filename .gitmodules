@@ -1,0 +1,3 @@
+[submodule "wmediumd"]
+	path = wmediumd
+	url = https://github.com/patgrosse/wmediumd
