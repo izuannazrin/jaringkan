@@ -135,7 +135,7 @@ class Router:
             try:
                 self.stop()
             except Exception as e:
-                log.warning(f"Failed to stop router {self.hostname}: {e}")
+                # log.warning(f"Failed to stop router {self.hostname}: {e}")
                 pass
             self.container.remove()
 

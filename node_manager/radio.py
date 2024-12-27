@@ -4,53 +4,87 @@
 #         To see the PHY in sysfs, we need to create a new mount namespace and remount sysfs.
 
 
-from os import path, kill as kill_pid, listdir
+from os import listdir
 import logging
 from subprocess import run
+import subprocess
 from .linuxutils import Namespace, mount
 
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 
 class PhyManagement:
 
+    tool_mgmt = 'mac80211_hwsim_mgmt/hwsim_mgmt/hwsim_mgmt'
+    initialized = False
     stub_ns: Namespace
-    phys: set[str] = set()
+    popped_phy: set[str] = set()
 
     @classmethod
-    def _prepare(cls):
-        if not path.exists('/sys/devices/virtual/mac80211_hwsim'):
-            raise OSError('Linux kernel module mac80211_hwsim not loaded!')
-        
-        # prepare stub namespace
-        cls.stub_ns = Namespace(net=True, mnt=True)
+    def _hwsim_mgmt_add(cls):
         with cls.stub_ns:
-            log.info('(Re-)mounting sysfs...')
-            mount(None, '/', None, None, propagation='rprivate')
-            mount('sysfs', '/sys', 'sysfs', None)
-        
-        # insert all mac80211_hwsim phy from root to stub namespace
-        hwsims = listdir('/sys/devices/virtual/mac80211_hwsim')
-        for hwsim in hwsims:
-            phys = listdir(f'/sys/devices/virtual/mac80211_hwsim/{hwsim}/ieee80211')
-            for phy in phys:
-                cls.phys.add(phy)
-                # run(['/bin/ls', '-l', f'/proc/self/fd'], pass_fds=[cls.stub_ns.net], check=True)
-                run(['/usr/bin/iw', 'phy', phy, 'set', 'netns', 'name', f'/proc/self/fd/{cls.stub_ns.net}'], pass_fds=[cls.stub_ns.net], check=True)
+            process = run([cls.tool_mgmt, '-c'], stdout=subprocess.PIPE, check=True)
+            
+            hwsim_id = process.stdout.decode().split()[-1]
+            hwsim_id = int(hwsim_id)
 
-        if len(cls.phys) == 0:
-            raise OSError('No mac80211_hwsim PHY found!')
+            hwsim = f'hwsim{hwsim_id}'
+            phys = listdir(f'/sys/devices/virtual/mac80211_hwsim/{hwsim}/ieee80211')
+            if len(phys) == 0:
+                raise RuntimeError('No PHY found in newly created hwsim!')
+        
+            return (hwsim, phys[0])
+    
+    @classmethod
+    def _prepare_ns(cls):
+        # if getattr(cls, 'stub_ns', None):
+        #     log.warning("Stub namespace already created! Are you reloading?")
+        #     return
+
+        cls.stub_ns = Namespace(mnt=True, net=True)
+        with cls.stub_ns:
+            mount(None, '/', None, None, propagation='rprivate')    # change propagation
+            mount('sysfs', '/sys', 'sysfs', None)                   # in-place mount sysfs
+
+    @classmethod
+    def _iter_unused_phy(cls):
+        try:
+            hwsims = listdir('/sys/devices/virtual/mac80211_hwsim')
+            for hwsim in hwsims:
+                phys = listdir(f'/sys/devices/virtual/mac80211_hwsim/{hwsim}/ieee80211')
+                for phy in phys:
+                    if phy in cls.popped_phy:
+                        continue
+                    yield (hwsim, phy)
+        except FileNotFoundError:
+            pass
+
+    @classmethod
+    def prepare(cls):
+        # if not path.exists('/sys/devices/virtual/mac80211_hwsim'):
+        #     raise RuntimeError('Linux kernel module mac80211_hwsim not loaded!')
+        
+        cls._prepare_ns()
 
     @classmethod
     def pop(cls):
-        return cls.phys.pop()
+        try:
+            hwsim, phy = next(cls._iter_unused_phy())
+            log.debug(f"Popped PHY from unused pile: {phy}")
+        except StopIteration:
+            hwsim, phy = cls._hwsim_mgmt_add()
+            log.debug(f"Popped PHY from newly created hwsim: {phy}")
+
+        cls.popped_phy.add(phy)
+        return (hwsim, phy)
     
     @classmethod
     def push(cls, phy: str):
-        cls.phys.add(phy)
+        cls.popped_phy.add(phy[1])
 
-PhyManagement._prepare()
+PhyManagement.prepare()
 
 
 class RadioPhy:
@@ -59,13 +93,15 @@ class RadioPhy:
     Contains everything you need to control the PHY, such as binding to network namespace, etc.
     '''
 
+    _hwsim: str
     _phy: str
     _macaddr: str
-    _origin_netns: Namespace
-    _target_netns: Namespace | None
+
+    origin_netns: Namespace
+    target_netns: Namespace | None
 
     def __init__(self):
-        self._phy = PhyManagement.pop()
+        self._hwsim, self._phy = PhyManagement.pop()
         self._origin_netns = PhyManagement.stub_ns
         self._target_netns = None
 
@@ -76,16 +112,16 @@ class RadioPhy:
                 self._macaddr = f.read().strip()
 
     def __del__(self):
-        self.unbind()
+        try:
+            self.unbind()
+        except Exception as e:
+            # log.error(f"{self}: __del__: Failed to unbind PHY {self._phy}: {e}")
+            pass
         PhyManagement.push(self._phy)
     
     def __repr__(self):
         bound_str = f'bound' if self._target_netns else 'not bound'
         return f'<RadioPhy {self._phy} {bound_str}>'
-
-    @property
-    def phy(self):
-        return self._phy
 
     @property
     def macaddr(self):
@@ -100,13 +136,11 @@ class RadioPhy:
         
         self._target_netns = Namespace(net=netns_pid, mnt=True)
         with self._target_netns:
-            log.info("{self}: (Re-)mounting sysfs for target netns...")
             mount(None, '/', None, None, propagation='rprivate')
             mount('sysfs', '/sys', 'sysfs', None)
 
         # move from origin to target netns
         with self._origin_netns:
-            # run(['/bin/ls', '-l', f'/proc/self/fd'], pass_fds=[self._target_netns.net], check=True)
             run(['/usr/bin/iw', 'phy', self._phy, 'set', 'netns', 'name', f'/proc/self/fd/{self._target_netns.net}'], pass_fds=[self._target_netns.net], check=True)
     
     def unbind(self):
@@ -119,3 +153,4 @@ class RadioPhy:
 
         self._target_netns = None
         # TODO: check if by setting self._netns = None, __del__ will be called. Otherwise potential leak
+        log.warning(f"{self}: unbind(): Please check if {self._target_netns} is destroyed after this!")

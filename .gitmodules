@@ -1,3 +1,6 @@
 [submodule "wmediumd"]
 	path = wmediumd
-	url = https://github.com/patgrosse/wmediumd
+	url = https://github.com/bcopeland/wmediumd
+[submodule "mac80211_hwsim_mgmt"]
+	path = mac80211_hwsim_mgmt
+	url = https://github.com/patgrosse/mac80211_hwsim_mgmt

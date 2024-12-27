@@ -88,3 +88,5 @@
             573 return CompletedProcess(process.args, retcode, stdout, stderr)
 
         CalledProcessError: Command '['/usr/bin/ip', 'link', 'add', 'vjk-test2', 'type', 'veth', 'peer', 'name', 'vjkptest2']' returned non-zero exit status 2.
+
+[ ] correct __del__ behavior by checking if object attribute is set, i guess
