@@ -1,6 +1,7 @@
 from enum import IntEnum
 from typing import Iterable
 import os
+from os import strerror, open as open_fd, close as close_fd, readlink, getcwd, chdir, setns, unshare
 import ctypes, ctypes.util
 
 
@@ -44,11 +45,11 @@ class Namespace:
                 anon_ns.append(t)
             
             elif isinstance(target, int):     # PID
-                self._fd[t] = os.open(f'/proc/{target}/ns/{t}', 0)
+                self._fd[t] = open_fd(f'/proc/{target}/ns/{t}', 0)
                 self._nstarget[t] = ('pid', target)
 
             elif isinstance(target, str):   # absolute path
-                self._fd[t] = os.open(target, 0)
+                self._fd[t] = open_fd(target, 0)
                 self._nstarget[t] = ('path', target)
 
             else:
@@ -56,26 +57,26 @@ class Namespace:
             
         if anon_ns:
             for t in anon_ns:
-                self._pre_enter_fd[t] = os.open(f'/proc/self/ns/{t}', 0)
+                self._pre_enter_fd[t] = open_fd(f'/proc/self/ns/{t}', 0)
 
             if 'mnt' in anon_ns:
                 # anonymount mnt namespace have my special ability to stay in the same cwd
-                self._outside_wd = os.getcwd()
-                self._inside_wd = os.getcwd()
+                self._outside_wd = getcwd()
+                self._inside_wd = getcwd()
 
-            os.unshare(sum(Namespace.UNSHARE_FLAGS[t] for t in anon_ns))
+            unshare(sum(Namespace.UNSHARE_FLAGS[t] for t in anon_ns))
             for t in anon_ns:
-                self._fd[t] = os.open(f'/proc/self/ns/{t}', 0)
-                self._nstarget[t] = ('anon', os.readlink(f'/proc/self/ns/{t}'))
+                self._fd[t] = open_fd(f'/proc/self/ns/{t}', 0)
+                self._nstarget[t] = ('anon', readlink(f'/proc/self/ns/{t}'))
 
             # restore namespace
             for t, fd in self._pre_enter_fd.items():
-                os.setns(fd, Namespace.UNSHARE_FLAGS[t])
-                os.close(fd)
+                setns(fd, Namespace.UNSHARE_FLAGS[t])
+                close_fd(fd)
             self._pre_enter_fd.clear()
             
             if 'mnt' in anon_ns:
-                os.chdir(self._outside_wd)
+                chdir(self._outside_wd)
 
     def __repr__(self):
         nstargets = []
@@ -90,17 +91,17 @@ class Namespace:
 
     def __del__(self):
         for t, fd in self._pre_enter_fd.items():
-            # return to original namespace
-            os.setns(fd, 0)     # nstype is 0 because we cannot be bothered to determine it at this stage.
+            # in a likelihood we had __enter__'d without __exit__, return to original namespace
+            setns(fd, 0)     # nstype is 0 because we cannot be bothered to determine it at this stage.
             if t == 'mnt':
-                os.chdir(self._mnt_cwd)
+                chdir(self._mnt_cwd)
 
             # close namespace
-            os.close(fd)
+            close_fd(fd)
 
         for fd in self._fd.values():
             # close all namespace targets
-            os.close(fd)
+            close_fd(fd)
 
     def __getattr__(self, name):
         if name in Namespace.TYPES:
@@ -109,26 +110,26 @@ class Namespace:
     def __enter__(self):
         for t, fd in self._fd.items():
             # save current namespace
-            self._pre_enter_fd[t] = os.open(f'/proc/self/ns/{t}', 0)
+            self._pre_enter_fd[t] = open_fd(f'/proc/self/ns/{t}', 0)
 
             if t == 'mnt':
-                self._outside_wd = os.getcwd()
+                self._outside_wd = getcwd()
 
             # enter new namespace
             try:
-                os.unshare(Namespace.UNSHARE_FLAGS[t])    # HACK: i don't know why, but without this causes EINVAL
-                os.setns(fd, Namespace.UNSHARE_FLAGS[t])
+                unshare(Namespace.UNSHARE_FLAGS[t])    # HACK: i don't know why, but without this causes EINVAL
+                setns(fd, Namespace.UNSHARE_FLAGS[t])
 
                 if t == 'mnt' and self._inside_wd:
-                    os.chdir(self._inside_wd)
+                    chdir(self._inside_wd)
 
             except OSError:
                 # revert
                 for revert_t, revert_fd in self._pre_enter_fd.items():
                     if revert_t == t: continue
-                    os.setns(revert_fd, 0)
+                    setns(revert_fd, 0)
                     if revert_t == 'mnt':
-                        os.chdir(self._outside_wd)
+                        chdir(self._outside_wd)
                 self._pre_enter_fd.clear()
                 raise
 
@@ -137,16 +138,16 @@ class Namespace:
     def __exit__(self, exc_type, exc_value, traceback):
         for t, fd in self._pre_enter_fd.items():
             if t == 'mnt':
-                self._inside_wd = os.getcwd()
+                self._inside_wd = getcwd()
 
             # return to original namespace
-            os.setns(fd, Namespace.UNSHARE_FLAGS[t])
+            setns(fd, Namespace.UNSHARE_FLAGS[t])
 
             if t == 'mnt':
-                os.chdir(self._outside_wd)
+                chdir(self._outside_wd)
 
             # close original fd
-            os.close(fd)
+            close_fd(fd)
         self._pre_enter_fd.clear()
 
 
@@ -224,10 +225,10 @@ def mount(source: str, target: str, fs: str | None, options: Iterable[MountOptio
     ret = libc.mount(src_val, target_val, fs_val, mountflags, opt_val)
     if ret != 0:
         errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno))
+        raise OSError(errno, strerror(errno))
 
 def umount(target: str):
     ret = libc.umount(target.encode(), 0)
     if ret != 0:
         errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno))
+        raise OSError(errno, strerror(errno))
