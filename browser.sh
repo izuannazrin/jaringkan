@@ -18,6 +18,6 @@ if [[ -z "$container" ]]; then
 fi
 
 container_pid="$(docker inspect --format '{{.State.Pid}}' "$container")"
-tmpdir="$(mktemp -pd jk-ff-XXXXXX)"
+tmpdir="$(mktemp -d /tmp/jk-ff-XXXXXX)"
 sudo -E nsenter -t ${container_pid} -n sudo -u $(id -nu) firefox -no-remote -profile "${tmpdir}" http://localhost
 rm -rf "${tmpdir}"
