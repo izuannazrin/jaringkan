@@ -1,10 +1,9 @@
+from enum import IntEnum
 from typing import Iterable
-import logging
 import os
 import ctypes, ctypes.util
 
 
-log = logging.getLogger(__name__)
 libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
 libc.mount.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p)
 libc.umount.argtypes = (ctypes.c_char_p, ctypes.c_ulong)
@@ -26,13 +25,15 @@ class Namespace:
     _fd: dict[str,int]
     _pre_enter_fd: dict[str,int]
 
-    _mnt_cwd: str | None
+    _outside_wd: str | None
+    _inside_wd: str | None
 
     def __init__(self, **kwargs):
         self._nstarget = {}
         self._fd = {}
         self._pre_enter_fd = {}
-        self._mnt_cwd = None
+        self._outside_wd = None
+        self._inside_wd = None
 
         anon_ns = []
         for t, target in kwargs.items():
@@ -56,27 +57,25 @@ class Namespace:
         if anon_ns:
             for t in anon_ns:
                 self._pre_enter_fd[t] = os.open(f'/proc/self/ns/{t}', 0)
-            cwd = os.getcwd()
+
+            if 'mnt' in anon_ns:
+                # anonymount mnt namespace have my special ability to stay in the same cwd
+                self._outside_wd = os.getcwd()
+                self._inside_wd = os.getcwd()
 
             os.unshare(sum(Namespace.UNSHARE_FLAGS[t] for t in anon_ns))
             for t in anon_ns:
                 self._fd[t] = os.open(f'/proc/self/ns/{t}', 0)
                 self._nstarget[t] = ('anon', os.readlink(f'/proc/self/ns/{t}'))
-            
-            if cwd != os.getcwd():
-                log.debug(f"cwd does in fact change after unshare! {cwd} -> {os.getcwd()}")
 
             # restore namespace
             for t, fd in self._pre_enter_fd.items():
                 os.setns(fd, Namespace.UNSHARE_FLAGS[t])
                 os.close(fd)
             self._pre_enter_fd.clear()
-
-            if cwd != os.getcwd():
-                log.debug(f"cwd does in fact change after setns! {cwd} -> {os.getcwd()}")
-            os.chdir(cwd)
-
-        log.debug(f"{self}: __init__")
+            
+            if 'mnt' in anon_ns:
+                os.chdir(self._outside_wd)
 
     def __repr__(self):
         nstargets = []
@@ -90,11 +89,8 @@ class Namespace:
         return f'<Namespace {",".join(nstargets)}>'
 
     def __del__(self):
-        log.debug(f"{self}: __del__")
-
         for t, fd in self._pre_enter_fd.items():
             # return to original namespace
-            log.debug(f"{self}: Restoring {t} namespace.")
             os.setns(fd, 0)     # nstype is 0 because we cannot be bothered to determine it at this stage.
             if t == 'mnt':
                 os.chdir(self._mnt_cwd)
@@ -113,22 +109,26 @@ class Namespace:
     def __enter__(self):
         for t, fd in self._fd.items():
             # save current namespace
-            if t == 'mnt':
-                self._mnt_cwd = os.getcwd()
             self._pre_enter_fd[t] = os.open(f'/proc/self/ns/{t}', 0)
 
+            if t == 'mnt':
+                self._outside_wd = os.getcwd()
+
             # enter new namespace
-            log.debug(f"{self}: Entering {t} namespace.")
             try:
                 os.unshare(Namespace.UNSHARE_FLAGS[t])    # HACK: i don't know why, but without this causes EINVAL
                 os.setns(fd, Namespace.UNSHARE_FLAGS[t])
+
+                if t == 'mnt' and self._inside_wd:
+                    os.chdir(self._inside_wd)
 
             except OSError:
                 # revert
                 for revert_t, revert_fd in self._pre_enter_fd.items():
                     if revert_t == t: continue
-                    log.debug(f"{self}: Reverting {revert_t} namespace due to error.")
                     os.setns(revert_fd, 0)
+                    if revert_t == 'mnt':
+                        os.chdir(self._outside_wd)
                 self._pre_enter_fd.clear()
                 raise
 
@@ -136,79 +136,91 @@ class Namespace:
     
     def __exit__(self, exc_type, exc_value, traceback):
         for t, fd in self._pre_enter_fd.items():
+            if t == 'mnt':
+                self._inside_wd = os.getcwd()
+
             # return to original namespace
-            log.debug(f"{self}: Exiting {t} namespace.")
             os.setns(fd, Namespace.UNSHARE_FLAGS[t])
-            if self._mnt_cwd:
-                os.chdir(self._mnt_cwd)
+
+            if t == 'mnt':
+                os.chdir(self._outside_wd)
 
             # close original fd
             os.close(fd)
         self._pre_enter_fd.clear()
 
-    # def get_path(self, ns_type: str):
-    #     if ns_type not in Namespace.TYPES:
-    #         raise ValueError(f"Invalid namespace type '{ns_type}'")
-    #     return f'/proc/{os.getpid()}/fd/{self._fd[ns_type]}'
-    #     # TODO: check whether this path is correct when we are inside the namespace (pid namespace)
+
+class MountOptions(IntEnum):
+    RDONLY      = 1 << 0
+    NOSUID      = 1 << 1
+    NODEV       = 1 << 2
+    NOEXEC      = 1 << 3
+    SYNCHRONOUS = 1 << 4
+    REMOUNT     = 1 << 5
+    MANDLOCK    = 1 << 6
+    DIRSYNC     = 1 << 7
+    NOSYMFOLLOW = 1 << 8
+    NOATIME     = 1 << 10
+    NODIRATIME  = 1 << 11
+    BIND        = 1 << 12
+    MOVE        = 1 << 13
+    REC         = 1 << 14   # recursive
+    SILENT      = 1 << 15
+    POSIXACL    = 1 << 16
+    UNBINDABLE  = 1 << 17
+    PRIVATE     = 1 << 18
+    SLAVE       = 1 << 19
+    SHARED      = 1 << 20
+    RELATIME    = 1 << 21
+    KERNMOUNT   = 1 << 22
+    I_VERSION   = 1 << 23
+    STRICTATIME = 1 << 24
+    LAZYTIME    = 1 << 25
 
 
-MS_RDONLY       = 1 << 0
-MS_NOSUID       = 1 << 1
-MS_NODEV        = 1 << 2
-MS_NOEXEC       = 1 << 3
-MS_SYNCHRONOUS  = 1 << 4
-MS_REMOUNT      = 1 << 5
-MS_MANDLOCK     = 1 << 6
-MS_DIRSYNC      = 1 << 7
-MS_NOSYMFOLLOW  = 1 << 8
-MS_NOATIME      = 1 << 10
-MS_NODIRATIME   = 1 << 11
-MS_BIND         = 1 << 12
-MS_MOVE         = 1 << 13
-MS_REC          = 1 << 14
-MS_SILENT       = 1 << 15
-MS_POSIXACL     = 1 << 16
-MS_UNBINDABLE   = 1 << 17
-MS_PRIVATE      = 1 << 18
-MS_SLAVE        = 1 << 19
-MS_SHARED       = 1 << 20
-MS_RELATIME     = 1 << 21
-MS_KERNMOUNT    = 1 << 22
-MS_I_VERSION    = 1 << 23
-MS_STRICTATIME  = 1 << 24
-MS_LAZYTIME     = 1 << 25
+class MountPropagationMode(IntEnum):
+    SHARED      = MountOptions.SHARED
+    SLAVE       = MountOptions.SLAVE
+    PRIVATE     = MountOptions.PRIVATE
+    UNBINDABLE  = MountOptions.UNBINDABLE
 
-propagation_modes = {
-    'shared': MS_SHARED,
-    'slave': MS_SLAVE,
-    'private': MS_PRIVATE,
-    'unbindable': MS_UNBINDABLE
-}
 
-def mount(source: str, target: str, fs: str | None, options: Iterable[str] = None, remount=False, bind=False, propagation: str = None, move=False):
-    # if not fs and bind is False:
-    #     raise ValueError("fs can only be None if bind or remount is True")
-    
+def mount(source: str, target: str, fs: str | None, options: Iterable[MountOptions | str] = None, remount=False, bind=False, propagation: MountPropagationMode | str = None, move=False):
     mountflags = 0
     if remount:
-        mountflags |= MS_REMOUNT
+        mountflags |= MountOptions.REMOUNT
     if bind:
-        mountflags |= MS_BIND
+        mountflags |= MountOptions.BIND
     if move:
-        mountflags |= MS_MOVE
-    if isinstance(propagation, str):
+        mountflags |= MountOptions.MOVE
+    if options:
+        for opt in options:
+            if isinstance(opt, (MountOptions, int)):
+                mountflags |= opt
+            elif isinstance(opt, str):
+                try:
+                    mountflags |= MountOptions[opt.upper()]
+                except KeyError:
+                    raise ValueError(f"Invalid mount option '{opt}'")
+            else:
+                raise TypeError(f"Expected MountOptions or str, got {type(opt)}")
+
+    if isinstance(propagation, MountPropagationMode):
+        mountflags |= propagation
+    elif isinstance(propagation, str):
         if propagation[0] == 'r':
-            mountflags |= MS_REC
+            mountflags |= MountOptions.REC
             propagation = propagation[1:]
-        if propagation not in ('shared', 'slave', 'private', 'unbindable'):
+        try:
+            mountflags |= MountPropagationMode[propagation.upper()]
+        except KeyError:
             raise ValueError(f"Invalid propagation mode '{propagation}'")
-        mountflags |= propagation_modes[propagation]
 
     src_val = source.encode() if source else None
     target_val = target.encode() if target else None
     fs_val = fs.encode() if fs else None
     opt_val = ','.join(options).encode() if options else None
+
     ret = libc.mount(src_val, target_val, fs_val, mountflags, opt_val)
     if ret != 0:
         errno = ctypes.get_errno()
