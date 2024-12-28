@@ -44,7 +44,8 @@ class Wmediumd:
     @classmethod
     def _process_exec(cls, sock_api_path: str):
         run(['/bin/cat', cls._config_path], check=True)
-        cls._process = Popen([cls.tool_wmediumd, '-l', '7', '-c', cls._config_path, '-a', sock_api_path], stdout=sys.stderr, stderr=sys.stderr)
+        # cls._process = Popen([cls.tool_wmediumd, '-l', '7', '-c', cls._config_path, '-a', sock_api_path], stdout=sys.stderr, stderr=sys.stderr)
+        cls._process = Popen([cls.tool_wmediumd, '-l', '7', '-c', cls._config_path], stdout=sys.stderr, stderr=sys.stderr)
         log.debug(f"Started wmediumd, config {cls._config_path}, socket path {sock_api_path}")
 
     @classmethod
@@ -113,18 +114,18 @@ class Wmediumd:
         # wait for wmediumd to complete startup
         time.sleep(0.1)
 
-        try:
-            cls._sock_api = socket(AF_UNIX, SOCK_STREAM)
-            cls._sock_api.connect(tmp_path)
-        except:
-            cls._sock_api.close()
-            cls._sock_api = None
+        # try:
+        #     cls._sock_api = socket(AF_UNIX, SOCK_STREAM)
+        #     cls._sock_api.connect(tmp_path)
+        # except:
+        #     cls._sock_api.close()
+        #     cls._sock_api = None
             
-            cls._process_kill()
-            raise
+        #     cls._process_kill()
+        #     raise
 
         atexit.register(cls.stop)
-        cls.api_register()
+        # cls.api_register()
 
     @classmethod
     def stop(cls):
